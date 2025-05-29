@@ -1,0 +1,23 @@
+.:53 {
+    # ローカルドメインの設定
+    hosts {
+		192.168.11.224 fukaya-sus.lab
+		192.168.11.224 oruca.fukaya-sus.lab
+		192.168.11.224 gitlab.fukaya-sus.lab
+		192.168.11.225 ssh.fukaya-sus.lab
+        fallthrough
+    }
+
+    # キャッシュ機能の有効化 (応答速度向上と上位DNSへの負荷軽減)
+    cache 3600
+
+    # 外部ドメイン名の解決をパブリックDNSにフォワード
+    forward . 10.146.3.3
+
+    # ログ出力
+    log
+    errors
+
+    # 準備完了を通知 (コンテナのヘルスチェックなどに利用可能)
+    ready
+}

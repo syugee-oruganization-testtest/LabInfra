@@ -1,0 +1,39 @@
+services:
+  # --------------------------------------------------------------------------
+  #  🛡️ バックアップ管理システム (Duplicati)
+  # --------------------------------------------------------------------------
+  duplicati:
+    image: duplicati/duplicati:latest
+    container_name: BackupManager_duplicati
+    hostname: backup_manager
+    restart: unless-stopped
+    volumes:
+      - duplicati_config_data:/config
+      - duplicati_backups_storage:/backups
+      - db_dumps_staging_area:/source_db_dumps
+      - ./duplicati/scripts:/scripts # ルートにscripts/duplicatiを配置する想定
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Tokyo
+    networks:
+      - shared_backend_network
+    depends_on:
+      - postgres_db
+    profiles:
+      - extra
+
+  # --------------------------------------------------------------------------
+  #  👀 コンテナ管理プラットフォーム (Portainer CE)
+  # --------------------------------------------------------------------------
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: ContainerManager_portainer
+    hostname: container_manager
+    restart: unless-stopped
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - shared_backend_network

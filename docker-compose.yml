@@ -1,187 +1,22 @@
 name: FukayaLab_Server
 
-# --------------------------------------------------------------------------
-#  🧩 外部のDocker Composeファイルを取り込む (各Webサービスなど)
-# --------------------------------------------------------------------------
-# 例: GitLabや自作のWebアプリケーションなどを個別のComposeファイルで管理している場合
-# パスはこのdocker-compose.ymlファイルからの相対パスで指定します。
-# include:
-#   - path: ../gitlab-stack/docker-compose.yml
-#     # project_directory: ../gitlab-stack # 必要に応じて
-#   - path: ../my-custom-webapp/docker-compose.yml
-#     # project_directory: ../my-custom-webapp # 必要に応じて
-
-services:
-  # --------------------------------------------------------------------------
-  #  🌐 リバースプロキシ & HTTPS終端 (Caddy)
-  # --------------------------------------------------------------------------
-  caddy:
-    image: caddy:2-alpine
-    container_name: ReverseProxy_caddy
-    hostname: reverse_proxy # コンテナホスト名
-    restart: unless-stopped
-    ports:
-      - "80:80"   # HTTP (HTTPSへのリダイレクト用)
-      - "443:443"  # HTTPS
-#      - "443:443/udp" # HTTP/3 (QUIC) 用 (オプション)
-    volumes:
-      - ./Entry/ReverseProxy/Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data # 証明書などの永続化
-      - caddy_config:/config # Caddyの現在の設定など
-    environment:
-      - ACME_AGREE=true # Let's Encryptの利用規約に同意 (本番ドメインの場合)
-      - TZ=Asia/Tokyo # タイムゾーン設定 (任意)
-    networks:
-      - frontend_network
-      - shared_backend_network
-    depends_on: # Caddyが起動する前にプロキシ先のサービスがある程度起動していることを期待 (必須ではない)
-      - main_api
-      - pgadmin
-      - duplicati
-      - portainer
-
-  # --------------------------------------------------------------------------
-  #  🌐 DNS
-  # --------------------------------------------------------------------------
-  coreDNS:
-
-
-  # --------------------------------------------------------------------------
-  #  🚀 メインAPIサーバー
-  # --------------------------------------------------------------------------
-  main_api:
-    build:
-      context: ./Application/MainAPIM
-      dockerfile: Dockerfile
-    container_name: MainAPI_nodejs
-    hostname: main_api
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=production
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_NAME=${POSTGRES_DB}
-      - APP_LOG_LEVEL=${LOG_LEVEL}
-      # - JWT_SECRET=your_jwt_secret # TODO: .envファイルで管理
-      # 他、APIに必要な環境変数
-    volumes:
-      - ./Application/MainAPI/src:/usr/src/app # 開発時のホットリロード用 (本番では削除または調整)
-      - /usr/src/app/node_modules # ↑のボリュームマウント時にnode_modulesが上書きされるのを防ぐ
-    depends_on:
-      postgres_db:
-        condition: service_healthy # PostgreSQLがヘルスチェックをパスしてから起動 (PostgreSQL側のヘルスチェック設定が必要)
-    networks:
-      - shared_backend_network
-
-
-  # --------------------------------------------------------------------------
-  #  🐘 PostgreSQL データベース (アカウントDB, ログDBなど)
-  # --------------------------------------------------------------------------
-  postgres_db:
-    image: postgres:17-alpine
-    container_name: MainDB_postgres
-    hostname: main_db
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - PGDATA=/var/lib/postgresql/data/pgdata
-    volumes:
-      - postgres_db_data:/var/lib/postgresql/data/pgdata # DBデータの永続化
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U your_db_user -d your_app_database"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - shared_backend_network
-
-  # --------------------------------------------------------------------------
-  #  🐘 PostgreSQL 管理ツール (pgAdmin 4)
-  # --------------------------------------------------------------------------
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: DatabaseManager_postgres
-    hostname: db_manager
-    restart: unless-stopped
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@example.com # TODO: 変更
-      - PGADMIN_DEFAULT_PASSWORD=supersecretadminpassword # TODO: 強力なパスワードに変更し、.envファイルで管理
-      # - PGADMIN_LISTEN_PORT=80 # コンテナ内ポート (デフォルトは80)
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin # pgAdminの設定やサーバー接続情報の永続化
-    ports: # Caddy経由でアクセスさせるため、ホストへの直接公開は必須ではない
-    # - "5050:80"
-    depends_on:
-      - postgres_db
-    networks:
-      - shared_backend_network
-
-  # --------------------------------------------------------------------------
-  #  🛡️ バックアップ管理システム (Duplicati)
-  # --------------------------------------------------------------------------
-  duplicati:
-    image: duplicati/duplicati:latest
-    container_name: BackupManager_duplicati
-    hostname: backup_manager
-    restart: unless-stopped
-    volumes:
-      - duplicati_config_data:/config # Duplicatiの設定データ
-      - duplicati_backups_storage:/backups # Duplicatiが暗号化バックアップを保存する先 (実際のストレージパスにマウント推奨)
-      - db_dumps_staging_area:/source_db_dumps # DBダンプスクリプトの出力先であり、Duplicatiのバックアップ元
-      - ./duplicati_scripts:/scripts # pg_dumpを実行するスクリプトなどを置く場所
-    environment:
-      - PUID=1000 # TODO: ホストOSの適切なユーザーID/グループIDに変更
-      - PGID=1000
-      - TZ=Asia/Tokyo # タイムゾーン設定 (任意)
-    # Duplicatiのバックアップ前スクリプトでDBダンプを作成する場合、
-    # DuplicatiコンテナがPostgreSQLクライアントツール(pg_dump)を持っていなければ、
-    # スクリプト内で `docker exec -T postgres_db pg_dump ...` のように
-    # DBコンテナのコマンドを実行するか、
-    # あるいはDuplicatiコンテナにpg_dumpをインストールするDockerfileを作成する必要がある。
-    # もしくは、pg_dumpコマンドを持つ軽量なコンテナを一時的に起動してダンプを作成し、
-    # その出力先をDuplicatiが監視する形も考えられる。
-    # ここでは、/scriptsに置かれたスクリプトが何らかの方法でpg_dumpを実行できる前提。
-    networks:
-      - shared_backend_network # DBコンテナにアクセスするため
-    depends_on:
-      - postgres_db # DBダンプ作成のため
-    profiles:
-      - extra
-  # --------------------------------------------------------------------------
-  #  👀 コンテナ管理プラットフォーム (Portainer CE)
-  # --------------------------------------------------------------------------
-  portainer:
-    image: portainer/portainer-ce:latest # TODO: バージョンは適宜選択
-    container_name: ContainerManager_portainer
-    hostname: container_manager
-    restart: unless-stopped
-    command: -H unix:///var/run/docker.sock # Dockerソケットを指定
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # Dockerソケットをマウント
-      - portainer_data:/data # Portainerの設定データの永続化
-
-  # --------------------------------------------------------------------------
-  #  🧩 インクルードされたサービスのネットワーク設定 (例)
-  # --------------------------------------------------------------------------
-  # GitLab (includeされるサービス名が 'gitlab' の場合)
-  # gitlab:
-  #   networks:
-  #     - shared_backend_network
-  #   depends_on: # 必要に応じて依存関係を設定
-  #     - postgres_db # もしGitLabがこのDBを使うなら (通常はGitLab内部にDBを持つ)
-  #     - caddy # GitLabがCaddyの後に起動してほしい場合など
-
-  # 自作Webアプリ (includeされるサービス名が 'my_custom_webapp_service' の場合)
-  # my_custom_webapp_service:
-  #   networks:
-  #     - shared_backend_network
-  #   depends_on:
-  #     - main_api
+include:
+  - path: ./compose/Entry/index.yml
+  - path: ./compose/Database/index.yml
+  - path: ./compose/Management/index.yml
+  - path: ./compose/Api/index.yml
 
 # --------------------------------------------------------------------------
-#  💾 名前付きボリューム定義
+#  🌐 ネットワーク定義 (全体で共有するものはここに集約)
+# --------------------------------------------------------------------------
+networks:
+  frontend_network:
+    name: ${COMPOSE_PROJECT_NAME}_frontend_net
+  shared_backend_network:
+    name: ${COMPOSE_PROJECT_NAME}_backend_net
+
+# --------------------------------------------------------------------------
+#  💾 名前付きボリューム定義 (全体で共有するものはここに集約)
 # --------------------------------------------------------------------------
 volumes:
   caddy_data:
@@ -189,17 +24,6 @@ volumes:
   postgres_db_data:
   pgadmin_data:
   duplicati_config_data:
-  duplicati_backups_storage: # TODO: これは実際のバックアップ先に応じてホストパスなどに変更することを強く推奨
-  db_dumps_staging_area: # pg_dumpの出力先であり、Duplicatiの入力元となる共有ボリューム
+  duplicati_backups_storage:
+  db_dumps_staging_area:
   portainer_data:
-
-# --------------------------------------------------------------------------
-#  🌐 ネットワーク定義
-# --------------------------------------------------------------------------
-networks:
-  frontend_network: # Caddyが外部に公開する際に使用
-    driver: bridge
-    name: ${COMPOSE_PROJECT_NAME}_frontend_net # プロジェクト名を含む一意な名前
-  shared_backend_network:  # 内部サービス間の通信用
-    driver: bridge
-    name: ${COMPOSE_PROJECT_NAME}_backend_net # プロジェクト名を含む一意な名前

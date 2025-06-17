@@ -1,0 +1,59 @@
+services:
+  # --------------------------------------------------------------------------
+  #  🔑 アカウント管理API (NestJS)
+  # --------------------------------------------------------------------------
+  account_api:
+    build:
+      context: ./services/account-api # ルートにservices/account-apiを配置する想定
+      dockerfile: Dockerfile
+    container_name: AccountAPI_nestjs
+    hostname: account_api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    networks:
+      - shared_backend_network
+
+  # --------------------------------------------------------------------------
+  #  ✍️ ログ収集API (NestJS)
+  # --------------------------------------------------------------------------
+  log_api:
+    build:
+      context: ./services/log-api # ルートにservices/log-apiを配置する想定
+      dockerfile: Dockerfile
+    container_name: LogAPI_nestjs
+    hostname: log_api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # ログ専用DBや外部サービスを使う場合はここに追加
+    networks:
+      - shared_backend_network
+
+  # --------------------------------------------------------------------------
+  #  🛡️ バックアップ管理API (NestJS)
+  # --------------------------------------------------------------------------
+  backup_api:
+    build:
+      context: ./services/backup-api # ルートにservices/backup-apiを配置する想定
+      dockerfile: Dockerfile
+    container_name: BackupAPI_nestjs
+    hostname: backup_api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DUPLICATI_URL=http://duplicati:8200
+    depends_on:
+      - duplicati
+    networks:
+      - shared_backend_network

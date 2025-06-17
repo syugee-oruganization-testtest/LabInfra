@@ -1,0 +1,47 @@
+services:
+  # --------------------------------------------------------------------------
+  #  🌐 リバースプロキシ & HTTPS終端 (Caddy)
+  # --------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: proxy-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 (QUIC) 用
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile # Entryディレクトリ内にCaddyfileを配置する想定
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - ACME_AGREE=true
+      - TZ=Asia/Tokyo
+    networks:
+      - frontend_network
+      - shared_backend_network
+    depends_on:
+      - account_api
+      - log_api
+      - backup_api
+      - pgadmin
+      - duplicati
+      - portainer
+
+  # --------------------------------------------------------------------------
+  #  🌐 DNS (CoreDNS)
+  # --------------------------------------------------------------------------
+  coreDNS:
+    image: coredns/coredns:latest
+    container_name: dns-coredns
+    ports:
+      - "${HOST_IP}:53/tcp"
+      - "${HOST_IP}:53/udp"
+    env_file:
+      - ../.env # ルートディレクトリの.envファイルを参照
+    volumes:
+      - ./Corefile:/Corefile # Entryディレクトリ内にCorefileを配置する想定
+    command: -conf /Corefile
+    restart: unless-stopped
+    networks:
+      - shared_backend_network

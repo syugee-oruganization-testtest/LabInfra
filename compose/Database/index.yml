@@ -1,0 +1,41 @@
+services:
+  # --------------------------------------------------------------------------
+  #  🐘 PostgreSQL データベース
+  # --------------------------------------------------------------------------
+  postgres_db:
+    image: postgres:17-alpine
+    container_name: MainDB_postgres
+    hostname: main_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_db_data:/var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shared_backend_network
+
+  # --------------------------------------------------------------------------
+  #  🐘 PostgreSQL 管理ツール (pgAdmin 4)
+  # --------------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: DatabaseManager_postgres
+    hostname: db_manager
+    restart: unless-stopped
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres_db
+    networks:
+      - shared_backend_network
